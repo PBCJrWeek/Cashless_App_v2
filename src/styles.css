@@ -67,6 +67,32 @@ p {
   padding: 1.5rem;
 }
 
+.development-banner {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 1000;
+  max-width: 1320px;
+  margin: 0 auto 1rem;
+  padding: 0.9rem 1.1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  border: 2px solid #f59e0b;
+  border-radius: 14px;
+  background: #fff7d6;
+  color: #7c2d12;
+  box-shadow: 0 8px 24px rgba(124, 45, 18, 0.16);
+}
+
+.development-banner strong {
+  letter-spacing: 0.04em;
+}
+
+.development-banner span {
+  font-weight: 600;
+}
+
 .app-shell {
   max-width: 1320px;
   margin: 0 auto;
@@ -362,7 +388,11 @@ p {
 @media (max-width: 640px) {
   .page {
     padding: 0.8rem;
-  }
+  .development-banner {
+  position: static;
+  flex-direction: column;
+  align-items: flex-start;
+}}
 
   .topbar,
   .section-head,
