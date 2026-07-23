@@ -12,6 +12,8 @@ Netlify-hosted React app with Supabase Free for camper balances, barcode checkou
 - Transaction report filtering and CSV export
 - Store item catalog with barcode + price
 - Safe atomic balance updates through a Supabase Postgres RPC
+- Multi-item carts with one atomic order charge
+- Printable scanner command barcodes for checkout, undo, and cancel
 - CSV import for campers and store items with downloadable templates
 
 ## Stack
@@ -42,6 +44,11 @@ This creates:
 - row-level security policies
 - `apply_camper_transaction(...)` RPC
 - sample campers and sample store items
+
+For an existing development database, also apply migrations in `supabase/migrations`
+in filename order. The scanner-cart workflow requires:
+
+`supabase/migrations/20260723_scanner_cart_workflow.sql`
 
 ## 3. Configure the frontend
 
@@ -80,13 +87,30 @@ Use either:
 
 By default, each camper barcode is the same as the camper ID. You can later print Code 128 labels using that value.
 
-### Item charging
+### Scanner-only cart checkout
 Each store item has:
 - item name
 - barcode
 - price
 
-Scan the item barcode and the app loads the item and price, then save the charge to the selected camper.
+The normal scanner workflow is:
+
+1. Scan a camper barcode.
+2. Scan each store item. Repeated items increase the quantity.
+3. Scan `PBC-CMD-CHECKOUT` to charge the complete order once.
+4. The app clears the order and focuses the camper barcode field for the next customer.
+
+The Purchase administration menu contains printable Code 128 command barcodes:
+
+- `PBC-CMD-CHECKOUT` completes and charges the order.
+- `PBC-CMD-UNDO` removes one of the most recently scanned item.
+- `PBC-CMD-CANCEL` clears the order without charging it.
+
+Checkout is performed by the `complete_camper_order(...)` database function. It
+recalculates store-item prices from the database, checks the camper balance, saves
+the order and its line items, creates one aggregate transaction, and updates the
+balance in one atomic operation. A unique checkout token prevents duplicate charges
+if the same request is retried.
 
 ## CSV import
 

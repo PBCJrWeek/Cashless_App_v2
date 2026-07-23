@@ -12,6 +12,12 @@ import {
 import Workspace from "./Workspace";
 
 const QUICK_AMOUNTS = [50, 100, 200, 300];
+const SCANNER_COMMANDS = {
+  checkout: "PBC-CMD-CHECKOUT",
+  undo: "PBC-CMD-UNDO",
+  cancel: "PBC-CMD-CANCEL",
+};
+const SCAN_DEBOUNCE_MS = 250;
 const INITIAL_AUTH = { email: "", password: "" };
 const INITIAL_CAMPER_FORM = {
   camper_id: "",
@@ -51,6 +57,8 @@ function App() {
   const [campers, setCampers] = useState([]);
   const [items, setItems] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [cartLines, setCartLines] = useState([]);
+  const [expandedOrderIds, setExpandedOrderIds] = useState([]);
   const [selectedCamperId, setSelectedCamperId] = useState("");
   const [selectedItemId, setSelectedItemId] = useState("");
   const [search, setSearch] = useState("");
@@ -77,6 +85,9 @@ function App() {
   const itemImportRef = useRef(null);
   const camperBarcodeRef = useRef(null);
   const itemBarcodeRef = useRef(null);
+  const checkoutTokenRef = useRef(null);
+  const lastItemScanRef = useRef({ value: "", time: 0 });
+  const lastAddedCartKeyRef = useRef("");
 
   const [scannerTarget, setScannerTarget] = useState("camper");
   const [scannerActive, setScannerActive] = useState(false);
@@ -116,9 +127,13 @@ function App() {
       setCampers([]);
       setItems([]);
       setTransactions([]);
+      setCartLines([]);
       setSelectedCamperId("");
       setSelectedItemId("");
+      setCamperBarcodeInput("");
+      setItemBarcodeInput("");
       setScannerActive(false);
+      checkoutTokenRef.current = null;
       return;
     }
 
@@ -126,21 +141,16 @@ function App() {
   }, [session]);
 
   useEffect(() => {
-    if (!selectedItemId) return;
-    const item = items.find((entry) => entry.id === selectedItemId);
-    if (!item) return;
-    setChargeAmount((item.price_cents / 100).toFixed(2));
-    setChargeNote((current) => {
-      if (!current || current === "Canteen purchase") return item.item_name;
-      return current;
-    });
-  }, [selectedItemId, items]);
-
-  useEffect(() => {
     if (selectedCamperId) {
-      itemBarcodeRef.current?.focus();
+      window.requestAnimationFrame(() => itemBarcodeRef.current?.focus());
     }
   }, [selectedCamperId]);
+
+  useEffect(() => {
+    if (session && !loadingData && !selectedCamperId) {
+      window.requestAnimationFrame(() => camperBarcodeRef.current?.focus());
+    }
+  }, [session, loadingData, selectedCamperId]);
 
   const filteredCampers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -157,7 +167,19 @@ function App() {
   const selectedCamper =
     campers.find((camper) => camper.id === selectedCamperId) ?? null;
 
-  const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+  const cartTotalCents = useMemo(
+    () =>
+      cartLines.reduce(
+        (total, line) => total + line.unitPriceCents * line.quantity,
+        0
+      ),
+    [cartLines]
+  );
+
+  const cartItemCount = useMemo(
+    () => cartLines.reduce((total, line) => total + line.quantity, 0),
+    [cartLines]
+  );
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((transaction) => {
@@ -378,8 +400,9 @@ function App() {
           .order("item_name", { ascending: true }),
         supabase
           .from("transactions")
-          .select("id, transaction_type, amount_cents, note, created_at, campers(full_name, camper_id), store_items(item_name, barcode_value)"
-  )
+          .select(
+            "id, transaction_type, amount_cents, note, created_at, voided_at, order_id, campers(full_name, camper_id), store_items(item_name, barcode_value), orders(order_number, item_count, total_cents, status, note, order_items(id, item_name, barcode_value, unit_price_cents, quantity, line_total_cents))"
+          )
           .order("created_at", { ascending: false })
           .limit(500),
       ]);
@@ -391,10 +414,6 @@ function App() {
       setCampers(campersData ?? []);
       setItems(itemsData ?? []);
       setTransactions(transactionsData ?? []);
-
-      if ((campersData ?? []).length && !selectedCamperId) {
-        setSelectedCamperId(campersData[0].id);
-      }
     } catch (error) {
       setAppMessage(normalizeError(error, "Failed to load camp data."));
     } finally {
@@ -547,6 +566,235 @@ function App() {
     }
   }
 
+  function markCartChanged() {
+    checkoutTokenRef.current = null;
+  }
+
+  function focusCamperBarcode() {
+    window.requestAnimationFrame(() => camperBarcodeRef.current?.focus());
+  }
+
+  function focusItemBarcode() {
+    window.requestAnimationFrame(() => itemBarcodeRef.current?.focus());
+  }
+
+  function addItemToCart(item) {
+    if (!selectedCamper) {
+      setAppMessage("Scan or select a camper before adding items.");
+      focusCamperBarcode();
+      return false;
+    }
+
+    const key = `item:${item.id}`;
+    markCartChanged();
+    lastAddedCartKeyRef.current = key;
+    setCartLines((current) => {
+      const existing = current.find((line) => line.key === key);
+      if (existing) {
+        return current.map((line) =>
+          line.key === key ? { ...line, quantity: line.quantity + 1 } : line
+        );
+      }
+
+      return [
+        ...current,
+        {
+          key,
+          itemId: item.id,
+          label: item.item_name,
+          barcode: item.barcode_value,
+          unitPriceCents: item.price_cents,
+          quantity: 1,
+          isCustom: false,
+        },
+      ];
+    });
+
+    setSelectedItemId(item.id);
+    setItemBarcodeInput("");
+    setAppMessage(`Added ${item.item_name} to the order.`);
+    focusItemBarcode();
+    return true;
+  }
+
+  function addCustomCharge(amountCents, label = "Custom charge") {
+    if (!selectedCamper) {
+      setAppMessage("Scan or select a camper before adding a charge.");
+      focusCamperBarcode();
+      return false;
+    }
+
+    const resolvedAmount =
+      Number.isInteger(amountCents) && amountCents > 0
+        ? amountCents
+        : parseCurrencyToCents(chargeAmount);
+
+    if (!Number.isFinite(resolvedAmount) || resolvedAmount <= 0) {
+      setAppMessage("Enter a valid custom amount greater than 0.");
+      return false;
+    }
+
+    const key = `custom:${resolvedAmount}:${label}`;
+    markCartChanged();
+    lastAddedCartKeyRef.current = key;
+    setCartLines((current) => {
+      const existing = current.find((line) => line.key === key);
+      if (existing) {
+        return current.map((line) =>
+          line.key === key ? { ...line, quantity: line.quantity + 1 } : line
+        );
+      }
+
+      return [
+        ...current,
+        {
+          key,
+          itemId: null,
+          label,
+          barcode: null,
+          unitPriceCents: resolvedAmount,
+          quantity: 1,
+          isCustom: true,
+        },
+      ];
+    });
+
+    setChargeAmount("");
+    setAppMessage(`Added ${label} to the order.`);
+    focusItemBarcode();
+    return true;
+  }
+
+  function updateCartQuantity(key, adjustment) {
+    markCartChanged();
+    setCartLines((current) =>
+      current
+        .map((line) =>
+          line.key === key
+            ? { ...line, quantity: Math.max(0, line.quantity + adjustment) }
+            : line
+        )
+        .filter((line) => line.quantity > 0)
+    );
+    focusItemBarcode();
+  }
+
+  function undoLastCartItem() {
+    if (!cartLines.length) {
+      setAppMessage("The current order is already empty.");
+      focusItemBarcode();
+      return false;
+    }
+
+    const preferredKey = lastAddedCartKeyRef.current;
+    const line =
+      cartLines.find((entry) => entry.key === preferredKey) ??
+      cartLines[cartLines.length - 1];
+
+    updateCartQuantity(line.key, -1);
+    setAppMessage(`Removed one ${line.label} from the order.`);
+    return true;
+  }
+
+  function resetOrderState() {
+    setCartLines([]);
+    setSelectedCamperId("");
+    setSelectedItemId("");
+    setCamperBarcodeInput("");
+    setItemBarcodeInput("");
+    setSearch("");
+    setChargeAmount("");
+    setChargeNote("Canteen purchase");
+    checkoutTokenRef.current = null;
+    lastAddedCartKeyRef.current = "";
+  }
+
+  function cancelOrder() {
+    const camperName = selectedCamper?.full_name;
+    resetOrderState();
+    setAppMessage(
+      camperName ? `Canceled ${camperName}'s order.` : "The current order was cleared."
+    );
+    focusCamperBarcode();
+    return true;
+  }
+
+  async function completeOrder() {
+    if (savingAction) return false;
+    if (!selectedCamper) {
+      setAppMessage("Scan or select a camper before checkout.");
+      focusCamperBarcode();
+      return false;
+    }
+    if (!cartLines.length || cartTotalCents <= 0) {
+      setAppMessage("Add at least one item before checkout.");
+      focusItemBarcode();
+      return false;
+    }
+
+    setSavingAction(true);
+    setAppMessage("");
+
+    if (!checkoutTokenRef.current) {
+      checkoutTokenRef.current = globalThis.crypto.randomUUID();
+    }
+
+    try {
+      const { data, error } = await supabase.rpc("complete_camper_order", {
+        p_camper_id: selectedCamper.id,
+        p_lines: cartLines.map((line) => ({
+          item_id: line.itemId,
+          quantity: line.quantity,
+          custom_amount_cents: line.isCustom ? line.unitPriceCents : null,
+          label: line.label,
+        })),
+        p_note: chargeNote || null,
+        p_checkout_token: checkoutTokenRef.current,
+      });
+
+      if (error) throw error;
+
+      const result = Array.isArray(data) ? data[0] : data;
+      if (!result?.success) {
+        throw new Error(result?.message || "The order could not be completed.");
+      }
+
+      const successMessage =
+        result.message ||
+        `Order #${result.order_number} charged ${formatMoneyFromCents(
+          result.total_cents
+        )}.`;
+
+      resetOrderState();
+      await refreshData();
+      setAppMessage(successMessage);
+      focusCamperBarcode();
+      return true;
+    } catch (error) {
+      setAppMessage(normalizeError(error, "Could not complete the order."));
+      focusItemBarcode();
+      return false;
+    } finally {
+      setSavingAction(false);
+    }
+  }
+
+  function selectCamperForOrder(camper) {
+    if (selectedCamperId && selectedCamperId !== camper.id && cartLines.length) {
+      setCartLines([]);
+      checkoutTokenRef.current = null;
+      lastAddedCartKeyRef.current = "";
+    }
+
+    setSelectedCamperId(camper.id);
+    setSearch(camper.camper_id);
+    setCamperBarcodeInput("");
+    setItemBarcodeInput("");
+    setAppMessage(`Selected ${camper.full_name}.`);
+    focusItemBarcode();
+    return true;
+  }
+
   function handleCamperBarcodeLookup(value) {
     const normalized = String(value ?? "").trim();
     setCamperBarcodeInput(normalized);
@@ -559,19 +807,43 @@ function App() {
 
     if (!camper) {
       setAppMessage(`No camper found for barcode ${normalized}.`);
+      focusCamperBarcode();
       return false;
     }
 
-    setSelectedCamperId(camper.id);
-    setSearch(camper.camper_id);
-    setAppMessage(`Selected ${camper.full_name}.`);
-    return true;
+    return selectCamperForOrder(camper);
   }
 
   function handleItemBarcodeLookup(value) {
     const normalized = String(value ?? "").trim();
     setItemBarcodeInput(normalized);
     if (!normalized) return;
+
+    const upperValue = normalized.toUpperCase();
+    if (upperValue === SCANNER_COMMANDS.checkout) {
+      setItemBarcodeInput("");
+      completeOrder();
+      return true;
+    }
+    if (upperValue === SCANNER_COMMANDS.undo) {
+      setItemBarcodeInput("");
+      return undoLastCartItem();
+    }
+    if (upperValue === SCANNER_COMMANDS.cancel) {
+      setItemBarcodeInput("");
+      return cancelOrder();
+    }
+
+    const now = Date.now();
+    if (
+      lastItemScanRef.current.value === upperValue &&
+      now - lastItemScanRef.current.time < SCAN_DEBOUNCE_MS
+    ) {
+      setItemBarcodeInput("");
+      focusItemBarcode();
+      return false;
+    }
+    lastItemScanRef.current = { value: upperValue, time: now };
 
     const item = items.find((entry) => {
       const barcode = entry.barcode_value || "";
@@ -580,15 +852,13 @@ function App() {
 
     if (!item) {
       setSelectedItemId("");
+      setItemBarcodeInput("");
       setAppMessage(`No item found for barcode ${normalized}.`);
+      focusItemBarcode();
       return false;
     }
 
-    setSelectedItemId(item.id);
-    setChargeAmount((item.price_cents / 100).toFixed(2));
-    setChargeNote(item.item_name);
-    setAppMessage(`Loaded item ${item.item_name}.`);
-    return true;
+    return addItemToCart(item);
   }
 
   async function startScanner() {
@@ -658,6 +928,8 @@ function App() {
         "Camper Name",
         "Amount",
         "Note",
+        "Order Number",
+        "Item Count",
         "Item",
         "Item Barcode",
       ],
@@ -668,12 +940,50 @@ function App() {
         entry.campers?.full_name ?? "",
         (entry.amount_cents / 100).toFixed(2),
         entry.note ?? "",
+        entry.orders?.order_number ?? "",
+        entry.orders?.item_count ?? "",
         entry.store_items?.item_name ?? "",
         entry.store_items?.barcode_value ?? "",
       ]),
     ];
 
     downloadCsv("camp-transactions-report.csv", rows);
+  }
+
+  function exportOrderItems() {
+    const rows = [
+      [
+        "Timestamp",
+        "Order Number",
+        "Camper ID",
+        "Camper Name",
+        "Order Status",
+        "Item",
+        "Barcode",
+        "Unit Price",
+        "Quantity",
+        "Line Total",
+      ],
+    ];
+
+    filteredTransactions.forEach((entry) => {
+      entry.orders?.order_items?.forEach((line) => {
+        rows.push([
+          formatDate(entry.created_at),
+          entry.orders.order_number,
+          entry.campers?.camper_id ?? "",
+          entry.campers?.full_name ?? "",
+          entry.orders.status,
+          line.item_name,
+          line.barcode_value ?? "",
+          (line.unit_price_cents / 100).toFixed(2),
+          line.quantity,
+          (line.line_total_cents / 100).toFixed(2),
+        ]);
+      });
+    });
+
+    downloadCsv("camp-order-items-report.csv", rows);
   }
 
   if (!session) {
@@ -788,7 +1098,10 @@ function App() {
             filteredEntries: filteredCampers,
             selectedId: selectedCamperId,
             selected: selectedCamper,
-            select: setSelectedCamperId,
+            select: (camperId) => {
+              const camper = campers.find((entry) => entry.id === camperId);
+              if (camper) selectCamperForOrder(camper);
+            },
             admin: {
               expanded: showCamperAdmin,
               setExpanded: setShowCamperAdmin,
@@ -809,12 +1122,20 @@ function App() {
             barcodeRef: itemBarcodeRef,
             findByBarcode: handleItemBarcodeLookup,
             quickAmounts: QUICK_AMOUNTS,
-            selectedItem,
             chargeAmount,
             setChargeAmount,
             chargeNote,
             setChargeNote,
             applyTransaction,
+            cartLines,
+            cartTotalCents,
+            cartItemCount,
+            addCustomCharge,
+            updateCartQuantity,
+            undoLastCartItem,
+            cancelOrder,
+            completeOrder,
+            commands: SCANNER_COMMANDS,
             saving: savingAction,
             admin: {
               expanded: showPurchaseAdmin,
@@ -836,7 +1157,10 @@ function App() {
           items={{
             entries: items,
             selectedId: selectedItemId,
-            select: setSelectedItemId,
+            select: (itemId) => {
+              const item = items.find((entry) => entry.id === itemId);
+              if (item) addItemToCart(item);
+            },
           }}
         />
 
@@ -847,9 +1171,14 @@ function App() {
               <h2>Transaction reports</h2>
               <p className="muted">Filter recent transactions and export them to CSV.</p>
             </div>
-            <button type="button" onClick={exportTransactions}>
-              Export CSV
-            </button>
+            <div className="inline-form wrap">
+              <button type="button" onClick={exportTransactions}>
+                Export transactions CSV
+              </button>
+              <button type="button" onClick={exportOrderItems}>
+                Export order items CSV
+              </button>
+            </div>
           </div>
 
           <div className="grid-4">
@@ -914,41 +1243,90 @@ function App() {
             <div className="report-body">
              {filteredTransactions.map((entry) => {
   const canVoid = entry.transaction_type === "charge" && !entry.voided_at;
+  const hasOrder = Boolean(entry.orders);
+  const orderExpanded = expandedOrderIds.includes(entry.orders?.order_number);
 
   return (
-    <div key={entry.id} className="report-row">
-      <div>{formatDate(entry.created_at)}</div>
+    <div key={entry.id} className="report-entry">
+      <div className="report-row">
+        <div>{formatDate(entry.created_at)}</div>
 
-      <div>
-        <div className={`pill ${entry.transaction_type}`}>{entry.transaction_type}</div>
-        {entry.voided_at ? <div className="muted">Voided</div> : null}
-      </div>
+        <div>
+          <div className={`pill ${entry.transaction_type}`}>{entry.transaction_type}</div>
+          {entry.voided_at ? <div className="muted">Voided</div> : null}
+        </div>
 
-      <div>
-        <div>{entry.campers?.full_name ?? "Unknown camper"}</div>
-        <div className="muted">{entry.campers?.camper_id ?? ""}</div>
-      </div>
+        <div>
+          <div>{entry.campers?.full_name ?? "Unknown camper"}</div>
+          <div className="muted">{entry.campers?.camper_id ?? ""}</div>
+        </div>
 
-      <div>
-        <div>{entry.store_items?.item_name || entry.note || "—"}</div>
-        <div className="muted">
-          {entry.note && entry.store_items?.item_name ? entry.note : ""}
+        <div>
+          <div>
+            {hasOrder
+              ? `Order #${entry.orders.order_number} - ${entry.orders.item_count} item${
+                  entry.orders.item_count === 1 ? "" : "s"
+                }`
+              : entry.store_items?.item_name || entry.note || "—"}
+          </div>
+          <div className="muted">
+            {hasOrder
+              ? entry.orders.note || entry.note || ""
+              : entry.note && entry.store_items?.item_name
+                ? entry.note
+                : ""}
+          </div>
+          {hasOrder ? (
+            <button
+              type="button"
+              className="details-button"
+              onClick={() =>
+                setExpandedOrderIds((current) =>
+                  orderExpanded
+                    ? current.filter((number) => number !== entry.orders.order_number)
+                    : [...current, entry.orders.order_number]
+                )
+              }
+            >
+              {orderExpanded ? "Hide items" : "View items"}
+            </button>
+          ) : null}
+        </div>
+
+        <div>
+          <div>{formatMoneyFromCents(entry.amount_cents)}</div>
+          {canVoid ? (
+            <button
+              type="button"
+              onClick={() => voidTransaction(entry.id)}
+              disabled={savingAction}
+              style={{ marginTop: "0.35rem" }}
+            >
+              Void
+            </button>
+          ) : null}
         </div>
       </div>
 
-      <div>
-        <div>{formatMoneyFromCents(entry.amount_cents)}</div>
-        {canVoid ? (
-          <button
-            type="button"
-            onClick={() => voidTransaction(entry.id)}
-            disabled={savingAction}
-            style={{ marginTop: "0.35rem" }}
-          >
-            Void
-          </button>
-        ) : null}
-      </div>
+      {hasOrder && orderExpanded ? (
+        <div className="order-details">
+          {entry.orders.order_items.map((line) => (
+            <div className="order-detail-line" key={line.id}>
+              <span>
+                {line.quantity} x {line.item_name}
+              </span>
+              <span className="muted">
+                {formatMoneyFromCents(line.unit_price_cents)} each
+              </span>
+              <strong>{formatMoneyFromCents(line.line_total_cents)}</strong>
+            </div>
+          ))}
+          <div className="order-detail-total">
+            <strong>Order total</strong>
+            <strong>{formatMoneyFromCents(entry.orders.total_cents)}</strong>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 })}
