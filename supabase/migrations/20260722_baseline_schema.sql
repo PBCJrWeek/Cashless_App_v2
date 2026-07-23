@@ -1,3 +1,4 @@
+-- Baseline schema for the isolated development project.
 supabase/
   config.toml
   migrations/
