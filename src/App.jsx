@@ -28,7 +28,18 @@ const INITIAL_REPORT_FILTER = {
   startDate: "",
   endDate: "",
 };
-
+function DevelopmentBanner() {
+  return (
+    <aside
+      className="development-banner"
+      role="status"
+      aria-label="Development environment warning"
+    >
+      <strong>DEVELOPMENT VERSION — TEST DATA ONLY</strong>
+      <span>Do not use this system for live camp transactions.</span>
+    </aside>
+  );
+}
 function App() {
   const [session, setSession] = useState(null);
   const [authMode, setAuthMode] = useState("sign-in");
@@ -651,7 +662,9 @@ function App() {
   if (!session) {
     return (
       <main className="page">
-        <section className="auth-card">
+        <DevelopmentBanner />
+
+      <section className="auth-card">
           <div>
             <h1>PBC Cashless System</h1>
             <p className="muted">
@@ -714,7 +727,9 @@ function App() {
 
   return (
     <main className="page">
-      <div className="app-shell">
+       <DevelopmentBanner />
+
+    <div className="app-shell">
         <header className="topbar">
           <div>
             <h1>PBC Cashless System</h1>
