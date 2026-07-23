@@ -1,5 +1,6 @@
 import React from "react";
 import { formatMoneyFromCents, parseCurrencyToCents } from "./lib";
+import CommandBarcodes from "./CommandBarcodes";
 
 const ADMIN_WARNING = "Only use these features with direct permission from Adam";
 
@@ -22,7 +23,7 @@ export default function Workspace({
       <section className="panel stack store-items-panel">
         <div>
           <h2>Store items</h2>
-          <p className="muted">Choose an item to load its price into the purchase panel.</p>
+          <p className="muted">Choose an item to add it to the current order.</p>
         </div>
         <div className="items-list">
           {items.entries.map((item) => (
@@ -303,12 +304,20 @@ function PurchasePanel({
   barcodeRef,
   findByBarcode,
   quickAmounts,
-  selectedItem,
   chargeAmount,
   setChargeAmount,
   chargeNote,
   setChargeNote,
   applyTransaction,
+  cartLines,
+  cartTotalCents,
+  cartItemCount,
+  addCustomCharge,
+  updateCartQuantity,
+  undoLastCartItem,
+  cancelOrder,
+  completeOrder,
+  commands,
   selectedCamper,
   saving,
   admin,
@@ -323,14 +332,14 @@ function PurchasePanel({
   setItemForm,
   createItem,
 }) {
-  const validCharge =
+  const validCustomAmount =
     chargeAmount.trim() && parseCurrencyToCents(chargeAmount) > 0;
 
   return (
     <section className="panel stack">
       <div>
         <h2>Purchase</h2>
-        <p className="muted">Scan an item or enter the amount to charge.</p>
+        <p className="muted">Scan each item to build one order, then complete the total charge.</p>
       </div>
 
       <div className="inline-form">
@@ -350,7 +359,7 @@ function PurchasePanel({
           />
         </label>
         <button type="button" onClick={() => findByBarcode(barcode)}>
-          Load item
+          Add item
         </button>
       </div>
 
@@ -361,38 +370,105 @@ function PurchasePanel({
             <button
               key={amount}
               type="button"
-              onClick={() =>
-                applyTransaction("charge", (amount / 100).toFixed(2), "Quick charge")
-              }
+              onClick={() => addCustomCharge(amount, `Quick charge ${formatMoneyFromCents(amount)}`)}
               disabled={saving || !selectedCamper}
             >
-              Charge {formatMoneyFromCents(amount)}
+              Add {formatMoneyFromCents(amount)}
             </button>
           ))}
         </div>
       </div>
 
-      <div className={`selected-item ${selectedItem ? "has-item" : ""}`}>
-        <div className="label">Selected store item</div>
-        {selectedItem ? (
-          <>
-            <strong>{selectedItem.item_name}</strong>
-            <span>{formatMoneyFromCents(selectedItem.price_cents)}</span>
-            <span className="muted">Barcode {selectedItem.barcode_value}</span>
-          </>
-        ) : (
-          <span className="muted">No item selected. A custom charge can still be entered.</span>
-        )}
+      <div className="cart-card stack" aria-live="polite">
+        <div className="section-head">
+          <div>
+            <h3>Current order</h3>
+            <p className="muted">
+              {cartItemCount
+                ? `${cartItemCount} item${cartItemCount === 1 ? "" : "s"} scanned`
+                : "Scan the first item to begin."}
+            </p>
+          </div>
+          <div className="cart-total">{formatMoneyFromCents(cartTotalCents)}</div>
+        </div>
+
+        <div className="cart-lines">
+          {cartLines.map((line) => (
+            <div className="cart-line" key={line.key}>
+              <div>
+                <strong>{line.label}</strong>
+                <div className="muted">{formatMoneyFromCents(line.unitPriceCents)} each</div>
+              </div>
+              <div className="quantity-controls">
+                <button
+                  type="button"
+                  className="small-button"
+                  onClick={() => updateCartQuantity(line.key, -1)}
+                  aria-label={`Remove one ${line.label}`}
+                  disabled={saving}
+                >
+                  -
+                </button>
+                <strong>{line.quantity}</strong>
+                <button
+                  type="button"
+                  className="small-button"
+                  onClick={() => updateCartQuantity(line.key, 1)}
+                  aria-label={`Add one ${line.label}`}
+                  disabled={saving}
+                >
+                  +
+                </button>
+              </div>
+              <strong>{formatMoneyFromCents(line.unitPriceCents * line.quantity)}</strong>
+            </div>
+          ))}
+          {!cartLines.length ? <div className="empty">The current order is empty.</div> : null}
+        </div>
+
+        <div className="inline-form wrap">
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={undoLastCartItem}
+            disabled={saving || !cartLines.length}
+          >
+            Undo last item
+          </button>
+          <button
+            type="button"
+            className="danger-button"
+            onClick={cancelOrder}
+            disabled={saving || (!selectedCamper && !cartLines.length)}
+          >
+            Cancel order
+          </button>
+        </div>
       </div>
 
-      <label>
-        Custom amount
-        <input
-          value={chargeAmount}
-          onChange={(event) => setChargeAmount(event.target.value)}
-          placeholder="3.50"
-        />
-      </label>
+      <div className="inline-form">
+        <label className="grow">
+          Custom amount
+          <input
+            value={chargeAmount}
+            onChange={(event) => setChargeAmount(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addCustomCharge();
+              }
+            }}
+            placeholder="3.50"
+          />
+        </label>
+        <button
+          type="button"
+          onClick={() => addCustomCharge()}
+          disabled={saving || !selectedCamper || !validCustomAmount}
+        >
+          Add to order
+        </button>
+      </div>
 
       <label>
         Optional transaction note
@@ -403,15 +479,27 @@ function PurchasePanel({
         />
       </label>
 
+      <div className="checkout-summary">
+        <div>
+          <div className="label">Order total</div>
+          <div className="checkout-total">{formatMoneyFromCents(cartTotalCents)}</div>
+        </div>
+        <div className="command-help">
+          Scanner checkout barcode: <code>{commands.checkout}</code>
+        </div>
+      </div>
+
       <button
         type="button"
         className="charge-button"
-        onClick={() =>
-          applyTransaction("charge", chargeAmount, chargeNote, selectedItem?.id ?? null)
-        }
-        disabled={saving || !selectedCamper || !validCharge}
+        onClick={completeOrder}
+        disabled={saving || !selectedCamper || !cartLines.length}
       >
-        {selectedCamper ? `Charge ${selectedCamper.full_name}` : "Select a camper to charge"}
+        {saving
+          ? "Completing order..."
+          : selectedCamper
+            ? `Charge ${selectedCamper.full_name} ${formatMoneyFromCents(cartTotalCents)}`
+            : "Select a camper to charge"}
       </button>
 
       <button
@@ -428,6 +516,7 @@ function PurchasePanel({
       {admin.expanded ? (
         <div className="admin-menu stack">
           <div className="admin-warning">{ADMIN_WARNING}</div>
+          <CommandBarcodes commands={commands} />
           <div className="card stack">
             <h3>Add deposit</h3>
             <div className="inline-form">
