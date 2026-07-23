@@ -9,6 +9,7 @@ import {
   parseCurrencyToCents,
   supabase,
 } from "./lib";
+import Workspace from "./Workspace";
 
 const QUICK_AMOUNTS = [50, 100, 200, 300];
 const INITIAL_AUTH = { email: "", password: "" };
@@ -65,12 +66,17 @@ function App() {
 
   const [showAddCamper, setShowAddCamper] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
+  const [showCamperAdmin, setShowCamperAdmin] = useState(false);
+  const [showPurchaseAdmin, setShowPurchaseAdmin] = useState(false);
+  const [showMobileScanner, setShowMobileScanner] = useState(false);
   const [camperForm, setCamperForm] = useState(INITIAL_CAMPER_FORM);
   const [itemForm, setItemForm] = useState(INITIAL_ITEM_FORM);
 
   const [reportFilter, setReportFilter] = useState(INITIAL_REPORT_FILTER);
   const camperImportRef = useRef(null);
   const itemImportRef = useRef(null);
+  const camperBarcodeRef = useRef(null);
+  const itemBarcodeRef = useRef(null);
 
   const [scannerTarget, setScannerTarget] = useState("camper");
   const [scannerActive, setScannerActive] = useState(false);
@@ -129,6 +135,12 @@ function App() {
       return current;
     });
   }, [selectedItemId, items]);
+
+  useEffect(() => {
+    if (selectedCamperId) {
+      itemBarcodeRef.current?.focus();
+    }
+  }, [selectedCamperId]);
 
   const filteredCampers = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -632,6 +644,11 @@ function App() {
     }
   }
 
+  async function closeMobileScanner() {
+    await stopScanner();
+    setShowMobileScanner(false);
+  }
+
   function exportTransactions() {
     const rows = [
       [
@@ -749,441 +766,80 @@ function App() {
 
         {appMessage ? <div className="notice success">{appMessage}</div> : null}
 
-        <div className="layout">
-          <section className="panel">
-            <div className="section-head">
-              <div>
-                <h2>Campers</h2>
-                <p className="muted">Search by name, ID, cabin, or scan a camper barcode.</p>
-              </div>
-              <button type="button" onClick={() => setShowAddCamper((current) => !current)}>
-                {showAddCamper ? "Close" : "Add camper"}
-              </button>
-            </div>
+        <Workspace
+          scanner={{
+            expanded: showMobileScanner,
+            setExpanded: setShowMobileScanner,
+            target: scannerTarget,
+            setTarget: setScannerTarget,
+            active: scannerActive,
+            start: startScanner,
+            stop: stopScanner,
+            close: closeMobileScanner,
+            elementId: scannerElementId,
+          }}
+          camper={{
+            barcode: camperBarcodeInput,
+            setBarcode: setCamperBarcodeInput,
+            barcodeRef: camperBarcodeRef,
+            findByBarcode: handleCamperBarcodeLookup,
+            search,
+            setSearch,
+            filteredEntries: filteredCampers,
+            selectedId: selectedCamperId,
+            selected: selectedCamper,
+            select: setSelectedCamperId,
+            admin: {
+              expanded: showCamperAdmin,
+              setExpanded: setShowCamperAdmin,
+              showForm: showAddCamper,
+              setShowForm: setShowAddCamper,
+            },
+            form: camperForm,
+            setForm: setCamperForm,
+            create: createCamper,
+            downloadTemplate: downloadCamperTemplate,
+            importRef: camperImportRef,
+            importCsv: importCampersCsv,
+            saving: savingAction,
+          }}
+          purchase={{
+            barcode: itemBarcodeInput,
+            setBarcode: setItemBarcodeInput,
+            barcodeRef: itemBarcodeRef,
+            findByBarcode: handleItemBarcodeLookup,
+            quickAmounts: QUICK_AMOUNTS,
+            selectedItem,
+            chargeAmount,
+            setChargeAmount,
+            chargeNote,
+            setChargeNote,
+            applyTransaction,
+            saving: savingAction,
+            admin: {
+              expanded: showPurchaseAdmin,
+              setExpanded: setShowPurchaseAdmin,
+              showForm: showAddItem,
+              setShowForm: setShowAddItem,
+            },
+            depositAmount,
+            setDepositAmount,
+            depositNote,
+            setDepositNote,
+            downloadTemplate: downloadItemTemplate,
+            importRef: itemImportRef,
+            importCsv: importItemsCsv,
+            itemForm,
+            setItemForm,
+            createItem,
+          }}
+          items={{
+            entries: items,
+            selectedId: selectedItemId,
+            select: setSelectedItemId,
+          }}
+        />
 
-            {showAddCamper ? (
-              <form className="card stack" onSubmit={createCamper}>
-                <div className="grid-2">
-                  <label>
-                    Camper ID
-                    <input
-                      value={camperForm.camper_id}
-                      onChange={(event) =>
-                        setCamperForm((current) => ({ ...current, camper_id: event.target.value }))
-                      }
-                      required
-                    />
-                  </label>
-                  <label>
-                    Cabin
-                    <input
-                      value={camperForm.cabin}
-                      onChange={(event) =>
-                        setCamperForm((current) => ({ ...current, cabin: event.target.value }))
-                      }
-                    />
-                  </label>
-                </div>
-
-                <label>
-                  Full name
-                  <input
-                    value={camperForm.full_name}
-                    onChange={(event) =>
-                      setCamperForm((current) => ({ ...current, full_name: event.target.value }))
-                    }
-                    required
-                  />
-                </label>
-
-                <label>
-                  Starting balance
-                  <input
-                    value={camperForm.starting_balance}
-                    onChange={(event) =>
-                      setCamperForm((current) => ({
-                        ...current,
-                        starting_balance: event.target.value,
-                      }))
-                    }
-                    placeholder="25.00"
-                    required
-                  />
-                </label>
-
-                <button type="submit" disabled={savingAction}>
-                  Save camper
-                </button>
-              </form>
-            ) : null}
-
-
-            <div className="card stack">
-              <div className="section-head">
-                <div>
-                  <h3>Import campers</h3>
-                  <p className="muted">Upload a CSV to add or update camper balances in bulk.</p>
-                </div>
-              </div>
-              <div className="inline-form wrap">
-                <button type="button" onClick={downloadCamperTemplate}>
-                  Download camper CSV template
-                </button>
-                <button
-                  type="button"
-                  onClick={() => camperImportRef.current?.click()}
-                  disabled={savingAction}
-                >
-                  Import campers CSV
-                </button>
-                <input
-                  ref={camperImportRef}
-                  type="file"
-                  accept=".csv,text/csv"
-                  hidden
-                  onChange={importCampersCsv}
-                />
-              </div>
-              <div className="muted">
-                Required columns: camper_id, full_name. Optional: cabin, barcode_value, starting_balance.
-              </div>
-            </div>
-
-            <div className="search stack">
-              <label>
-                Search campers
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="A101, Emma, Pine"
-                />
-              </label>
-
-              <div className="inline-form">
-                <label className="grow">
-                  Camper barcode
-                  <input
-                    value={camperBarcodeInput}
-                    onChange={(event) => setCamperBarcodeInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        handleCamperBarcodeLookup(camperBarcodeInput);
-                      }
-                    }}
-                    placeholder="Scan or type camper barcode"
-                  />
-                </label>
-                <button type="button" onClick={() => handleCamperBarcodeLookup(camperBarcodeInput)}>
-                  Find camper
-                </button>
-              </div>
-            </div>
-
-            <div className="table">
-              <div className="thead">
-                <div>ID</div>
-                <div>Name</div>
-                <div>Cabin</div>
-                <div>Balance</div>
-              </div>
-              <div className="tbody">
-                {filteredCampers.map((camper) => (
-                  <button
-                    key={camper.id}
-                    type="button"
-                    className={`row ${selectedCamperId === camper.id ? "selected" : ""}`}
-                    onClick={() => setSelectedCamperId(camper.id)}
-                  >
-                    <div>{camper.camper_id}</div>
-                    <div>{camper.full_name}</div>
-                    <div>{camper.cabin || "—"}</div>
-                    <div>{formatMoneyFromCents(camper.balance_cents)}</div>
-                  </button>
-                ))}
-                {!filteredCampers.length ? <div className="empty">No campers found.</div> : null}
-              </div>
-            </div>
-          </section>
-
-          <div className="right-column">
-            <section className="panel stack">
-              <div className="section-head">
-                <div>
-                  <h2>Scanner</h2>
-                  <p className="muted">Use the camera to scan camper IDs or item barcodes.</p>
-                </div>
-              </div>
-
-              <div className="segmented">
-                <button
-                  type="button"
-                  className={scannerTarget === "camper" ? "active" : ""}
-                  onClick={() => setScannerTarget("camper")}
-                >
-                  Scan camper
-                </button>
-                <button
-                  type="button"
-                  className={scannerTarget === "item" ? "active" : ""}
-                  onClick={() => setScannerTarget("item")}
-                >
-                  Scan item
-                </button>
-              </div>
-
-              <div className="inline-form">
-                <button type="button" onClick={startScanner} disabled={scannerActive}>
-                  {scannerActive ? "Scanner running" : "Start camera"}
-                </button>
-                <button type="button" onClick={stopScanner} disabled={!scannerActive}>
-                  Stop camera
-                </button>
-              </div>
-
-              <div id={scannerElementId} className="scanner-box" />
-            </section>
-
-            <section className="panel stack">
-              <div>
-                <h2>Selected camper</h2>
-                {selectedCamper ? (
-                  <>
-                    <div className="card">
-                      <div className="label">Camper</div>
-                      <div className="value">{selectedCamper.full_name}</div>
-                      <div className="muted">
-                        {selectedCamper.camper_id} · {selectedCamper.cabin || "No cabin"}
-                      </div>
-                    </div>
-                    <div className="card balance-card">
-                      <div className="label">Current balance</div>
-                      <div className="value">
-                        {formatMoneyFromCents(selectedCamper.balance_cents)}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="empty">Select a camper to continue.</div>
-                )}
-              </div>
-
-              <div className="card stack">
-                <div className="section-head">
-                  <div>
-                    <h3>Charge account</h3>
-                    <p className="muted">Use quick buttons, a custom amount, or an item barcode.</p>
-                  </div>
-                </div>
-
-                <div className="quick-grid">
-                  {QUICK_AMOUNTS.map((amount) => (
-                    <button
-                      key={amount}
-                      type="button"
-                      onClick={() =>
-                        applyTransaction("charge", (amount / 100).toFixed(2), "Quick charge")
-                      }
-                      disabled={savingAction}
-                    >
-                      Charge {formatMoneyFromCents(amount)}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="inline-form">
-                  <label className="grow">
-                    Item barcode
-                    <input
-                      value={itemBarcodeInput}
-                      onChange={(event) => setItemBarcodeInput(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          handleItemBarcodeLookup(itemBarcodeInput);
-                        }
-                      }}
-                      placeholder="Scan or type item barcode"
-                    />
-                  </label>
-                  <button type="button" onClick={() => handleItemBarcodeLookup(itemBarcodeInput)}>
-                    Load item
-                  </button>
-                </div>
-
-                {selectedItem ? (
-                  <div className="notice">
-                    <strong>{selectedItem.item_name}</strong> ·{" "}
-                    {formatMoneyFromCents(selectedItem.price_cents)} · Barcode{" "}
-                    {selectedItem.barcode_value}
-                  </div>
-                ) : null}
-
-                <div className="inline-form">
-                  <label className="grow">
-                    Charge amount
-                    <input
-                      value={chargeAmount}
-                      onChange={(event) => setChargeAmount(event.target.value)}
-                      placeholder="3.50"
-                    />
-                  </label>
-                  <label className="grow">
-                    Note
-                    <input
-                      value={chargeNote}
-                      onChange={(event) => setChargeNote(event.target.value)}
-                    />
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    applyTransaction("charge", chargeAmount, chargeNote, selectedItem?.id ?? null)
-                  }
-                  disabled={savingAction}
-                >
-                  Save charge
-                </button>
-              </div>
-
-              <div className="card stack">
-                <div>
-                  <h3>Add deposit</h3>
-                  <p className="muted">Add more money to the camper balance during the week.</p>
-                </div>
-
-                <div className="inline-form">
-                  <label className="grow">
-                    Deposit amount
-                    <input
-                      value={depositAmount}
-                      onChange={(event) => setDepositAmount(event.target.value)}
-                      placeholder="20.00"
-                    />
-                  </label>
-                  <label className="grow">
-                    Note
-                    <input
-                      value={depositNote}
-                      onChange={(event) => setDepositNote(event.target.value)}
-                    />
-                  </label>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => applyTransaction("deposit", depositAmount, depositNote)}
-                  disabled={savingAction}
-                >
-                  Save deposit
-                </button>
-              </div>
-
-
-                <div className="card stack">
-                  <div>
-                    <h3>Import store items</h3>
-                    <p className="muted">Upload a CSV to add or update barcode-priced items.</p>
-                  </div>
-                  <div className="inline-form wrap">
-                    <button type="button" onClick={downloadItemTemplate}>
-                      Download item CSV template
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => itemImportRef.current?.click()}
-                      disabled={savingAction}
-                    >
-                      Import items CSV
-                    </button>
-                    <input
-                      ref={itemImportRef}
-                      type="file"
-                      accept=".csv,text/csv"
-                      hidden
-                      onChange={importItemsCsv}
-                    />
-                  </div>
-                  <div className="muted">
-                    Required columns: item_name, barcode_value, price.
-                  </div>
-                </div>
-
-              <div className="card stack">
-                <div className="section-head">
-                  <div>
-                    <h3>Store items</h3>
-                    <p className="muted">Add barcode-priced items for canteen or craft shack.</p>
-                  </div>
-                  <button type="button" onClick={() => setShowAddItem((current) => !current)}>
-                    {showAddItem ? "Close" : "Add item"}
-                  </button>
-                </div>
-
-                {showAddItem ? (
-                  <form className="stack" onSubmit={createItem}>
-                    <label>
-                      Item name
-                      <input
-                        value={itemForm.item_name}
-                        onChange={(event) =>
-                          setItemForm((current) => ({ ...current, item_name: event.target.value }))
-                        }
-                        required
-                      />
-                    </label>
-                    <div className="grid-2">
-                      <label>
-                        Barcode
-                        <input
-                          value={itemForm.barcode_value}
-                          onChange={(event) =>
-                            setItemForm((current) => ({
-                              ...current,
-                              barcode_value: event.target.value,
-                            }))
-                          }
-                          required
-                        />
-                      </label>
-                      <label>
-                        Price
-                        <input
-                          value={itemForm.price}
-                          onChange={(event) =>
-                            setItemForm((current) => ({ ...current, price: event.target.value }))
-                          }
-                          placeholder="2.50"
-                          required
-                        />
-                      </label>
-                    </div>
-                    <button type="submit" disabled={savingAction}>
-                      Save item
-                    </button>
-                  </form>
-                ) : (
-                  <div className="items-list" style={{ maxHeight: "400px", overflowY: "auto" }}>
-                    {items.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className={`list-button ${selectedItemId === item.id ? "selected" : ""}`}
-                        onClick={() => setSelectedItemId(item.id)}
-                      >
-                        <span>{item.item_name}</span>
-                        <span>{formatMoneyFromCents(item.price_cents)}</span>
-                      </button>
-                    ))}
-                    {!items.length ? <div className="empty">No store items yet.</div> : null}
-                  </div>
-                )}
-              </div>
-            </section>
-          </div>
-        </div>
 
         <section className="panel stack report-panel">
           <div className="section-head">
