@@ -176,10 +176,8 @@ p {
   position: sticky;
   top: 5.4rem;
   z-index: 900;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1.5rem;
+  display: grid;
+  gap: 0.75rem;
   margin: 1rem 0;
   padding: 1rem 1.25rem;
   border: 2px solid #93c5fd;
@@ -187,6 +185,74 @@ p {
   background: rgba(239, 246, 255, 0.97);
   box-shadow: 0 12px 30px rgba(30, 64, 175, 0.12);
   backdrop-filter: blur(10px);
+}
+
+.sticky-app-message {
+  padding: 0.65rem 0.8rem;
+  border: 1px solid #60a5fa;
+  border-radius: 12px;
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 750;
+}
+
+.sticky-summary-content {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(280px, 1.5fr) minmax(150px, auto);
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.sticky-order-summary {
+  min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.sticky-order-heading,
+.sticky-cart-line {
+  display: grid;
+  align-items: center;
+}
+
+.sticky-order-heading {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+
+.sticky-order-heading > strong {
+  font-size: 1.15rem;
+  color: #166534;
+}
+
+.sticky-cart-lines {
+  display: grid;
+  gap: 0.25rem;
+  max-height: 6.75rem;
+  margin-top: 0.45rem;
+  padding-top: 0.45rem;
+  padding-right: 0.25rem;
+  overflow-y: auto;
+  border-top: 1px solid #dbeafe;
+}
+
+.sticky-cart-line {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  font-size: 0.9rem;
+}
+
+.sticky-cart-line > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sticky-cart-quantity {
+  color: #475569;
+  font-weight: 750;
 }
 
 .summary-name {
@@ -616,6 +682,15 @@ p {
   .pos-layout {
     grid-template-columns: 1fr;
   }
+
+  .sticky-summary-content {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .sticky-order-summary {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
 }
 
 @media (max-width: 960px) {
@@ -677,10 +752,6 @@ p {
   .grid-2,
   .quick-grid {
     grid-template-columns: 1fr;
-  }
-
-  .selected-camper-summary {
-    align-items: flex-start;
   }
 
   .summary-balance {
