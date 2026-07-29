@@ -9,6 +9,7 @@ import {
   parseCurrencyToCents,
   supabase,
 } from "./lib";
+import { identifyScannerCommand } from "./scannerCommands";
 import Workspace from "./Workspace";
 
 const QUICK_AMOUNTS = [50, 100, 200, 300];
@@ -800,6 +801,11 @@ function App() {
     setCamperBarcodeInput(normalized);
     if (!normalized) return;
 
+    const command = identifyScannerCommand(normalized, SCANNER_COMMANDS);
+    if (command) {
+      return executeScannerCommand(command);
+    }
+
     const camper = campers.find((entry) => {
       const barcode = entry.barcode_value || entry.camper_id;
       return barcode.toLowerCase() === normalized.toLowerCase();
@@ -819,21 +825,12 @@ function App() {
     setItemBarcodeInput(normalized);
     if (!normalized) return;
 
-    const upperValue = normalized.toUpperCase();
-    if (upperValue === SCANNER_COMMANDS.checkout) {
-      setItemBarcodeInput("");
-      completeOrder();
-      return true;
-    }
-    if (upperValue === SCANNER_COMMANDS.undo) {
-      setItemBarcodeInput("");
-      return undoLastCartItem();
-    }
-    if (upperValue === SCANNER_COMMANDS.cancel) {
-      setItemBarcodeInput("");
-      return cancelOrder();
+    const command = identifyScannerCommand(normalized, SCANNER_COMMANDS);
+    if (command) {
+      return executeScannerCommand(command);
     }
 
+    const upperValue = normalized.toUpperCase();
     const now = Date.now();
     if (
       lastItemScanRef.current.value === upperValue &&
@@ -859,6 +856,24 @@ function App() {
     }
 
     return addItemToCart(item);
+  }
+
+  function executeScannerCommand(command) {
+    setCamperBarcodeInput("");
+    setItemBarcodeInput("");
+
+    if (command === "checkout") {
+      completeOrder();
+      return true;
+    }
+    if (command === "undo") {
+      return undoLastCartItem();
+    }
+    if (command === "cancel") {
+      return cancelOrder();
+    }
+
+    return false;
   }
 
   async function startScanner() {
