@@ -168,7 +168,7 @@ function CamperPanel({
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                findByBarcode(barcode);
+                findByBarcode(event.currentTarget.value);
               }
             }}
             placeholder="Scan or type camper barcode"
@@ -352,7 +352,7 @@ function PurchasePanel({
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault();
-                findByBarcode(barcode);
+                findByBarcode(event.currentTarget.value);
               }
             }}
             placeholder="Scan or type item barcode"
