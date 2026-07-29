@@ -1089,9 +1089,8 @@ function App() {
           </div>
         </header>
 
-        {appMessage ? <div className="notice success">{appMessage}</div> : null}
-
         <Workspace
+          message={appMessage}
           scanner={{
             expanded: showMobileScanner,
             setExpanded: setShowMobileScanner,

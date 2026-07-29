@@ -5,6 +5,7 @@ import CommandBarcodes from "./CommandBarcodes";
 const ADMIN_WARNING = "Only use these features with direct permission from Adam";
 
 export default function Workspace({
+  message,
   scanner,
   camper,
   purchase,
@@ -13,7 +14,13 @@ export default function Workspace({
   return (
     <>
       <MobileScanner {...scanner} />
-      <SelectedCamper camper={camper.selected} />
+      <SelectedCamper
+        camper={camper.selected}
+        message={message}
+        cartLines={purchase.cartLines}
+        cartItemCount={purchase.cartItemCount}
+        cartTotalCents={purchase.cartTotalCents}
+      />
 
       <div className="pos-layout">
         <CamperPanel {...camper} />
@@ -104,11 +111,23 @@ function MobileScanner({
   );
 }
 
-function SelectedCamper({ camper }) {
+function SelectedCamper({
+  camper,
+  message,
+  cartLines,
+  cartItemCount,
+  cartTotalCents,
+}) {
   return (
-    <section className="selected-camper-summary" aria-live="polite">
-      {camper ? (
-        <>
+    <section className="selected-camper-summary">
+      {message ? (
+        <div className="sticky-app-message" role="status" aria-live="polite">
+          {message}
+        </div>
+      ) : null}
+
+      <div className="sticky-summary-content">
+        {camper ? (
           <div>
             <div className="label">Selected camper</div>
             <div className="summary-name">{camper.full_name}</div>
@@ -116,18 +135,49 @@ function SelectedCamper({ camper }) {
               {camper.camper_id} | {camper.cabin || "No cabin"}
             </div>
           </div>
-          <div className="summary-balance">
-            <div className="label">Current balance</div>
-            <div className="value">{formatMoneyFromCents(camper.balance_cents)}</div>
+        ) : (
+          <div>
+            <div className="label">Selected camper</div>
+            <div className="summary-name">Select a camper to begin</div>
+            <div className="muted">Use the barcode field, search, or camper list below.</div>
           </div>
-        </>
-      ) : (
-        <div>
-          <div className="label">Selected camper</div>
-          <div className="summary-name">Select a camper to begin</div>
-          <div className="muted">Use the barcode field, search, or camper list below.</div>
+        )}
+
+        <div className="sticky-order-summary" aria-hidden="true">
+          <div className="sticky-order-heading">
+            <div>
+              <div className="label">Current order</div>
+              <div className="muted">
+                {cartItemCount
+                  ? `${cartItemCount} item${cartItemCount === 1 ? "" : "s"}`
+                  : "No items yet"}
+              </div>
+            </div>
+            <strong>{formatMoneyFromCents(cartTotalCents)}</strong>
+          </div>
+
+          {cartLines.length ? (
+            <div className="sticky-cart-lines">
+              {cartLines.map((line) => (
+                <div className="sticky-cart-line" key={line.key}>
+                  <span className="sticky-cart-quantity">{line.quantity}×</span>
+                  <span>{line.label}</span>
+                  <strong>
+                    {formatMoneyFromCents(line.unitPriceCents * line.quantity)}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
-      )}
+
+        <div className="summary-balance">
+          <div className="label">Current balance</div>
+          <div className="value">
+            {camper ? formatMoneyFromCents(camper.balance_cents) : "—"}
+          </div>
+        </div>
+      </div>
     </section>
   );
 }
